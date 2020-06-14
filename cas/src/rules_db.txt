@@ -1,0 +1,5 @@
+(a / b) * (c / d) = (a * c) / (b * d)
+a * (c / d) = (a * c) / d
+(a / b) * c = (a * c) / b
+(a / b) / c = a / (b * c)
+a / 1 = a
