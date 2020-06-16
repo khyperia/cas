@@ -1,4 +1,4 @@
-use crate::{parse, Ast, BinaryOpKind, UnaryOpKind};
+use crate::{parse, Ast, AstKind};
 use lazy_static::lazy_static;
 use std::{borrow::Cow, collections::hash_map::HashMap};
 
@@ -34,97 +34,35 @@ fn do_match<'a, 'b>(
     ast: &'a Ast<'b>,
     matches: &mut HashMap<String, &'a Ast<'b>>,
 ) -> bool {
-    match (pattern, ast) {
-        (Ast::Variable { name, .. }, rhs) => {
-            matches.insert(name.clone(), rhs);
-            true
-        }
-        (Ast::Number { value: left, .. }, Ast::Number { value: right, .. }) => left == right,
-        (
-            Ast::UnaryOp {
-                op: pattern_op,
-                value: pattern_value,
-                ..
-            },
-            Ast::UnaryOp {
-                op: ast_op,
-                value: ast_value,
-                ..
-            },
-        ) if *pattern_op == *ast_op => do_match(pattern_value, ast_value, matches),
-        (
-            Ast::BinaryOp {
-                op: pattern_op,
-                left: pattern_left,
-                right: pattern_right,
-                ..
-            },
-            Ast::BinaryOp {
-                op: ast_op,
-                left: ast_left,
-                right: ast_right,
-                ..
-            },
-        ) if *pattern_op == *ast_op => {
-            do_match(pattern_left, ast_left, matches) && do_match(pattern_right, ast_right, matches)
-        }
-        _ => false,
+    if let AstKind::Variable(name) = &pattern.kind {
+        matches.insert(name.clone(), ast);
+        true
+    } else if pattern.kind == ast.kind {
+        // TODO: varargs
+        assert_eq!(pattern.args.len(), ast.args.len());
+        let mut zip = pattern.args.iter().zip(&ast.args);
+        zip.all(|(subpat, subast)| do_match(subpat, subast, matches))
+    } else {
+        false
     }
 }
 
 fn do_replacement<'a>(replacement: &Ast<'a>, matches: &HashMap<String, &Ast<'a>>) -> Ast<'a> {
-    match replacement {
-        &Ast::Number { span, value } => Ast::Number { span, value },
-        Ast::Variable { span, name } => {
-            if let Some(&thing) = matches.get(name) {
-                thing.clone()
-            } else {
-                // TODO: Is this okay?
-                Ast::Variable {
-                    span,
-                    name: name.clone(),
-                }
-            }
+    if let AstKind::Variable(name) = &replacement.kind {
+        matches[name].clone()
+    } else {
+        let old_args = replacement.args.iter();
+        let args = old_args.map(|arg| do_replacement(arg, matches)).collect();
+        Ast {
+            span: replacement.span,
+            kind: replacement.kind.clone(),
+            args,
         }
-        Ast::UnaryOp { span, op, value } => {
-            // TODO: Wrong span
-            Ast::UnaryOp {
-                span,
-                op: *op,
-                value: Box::new(do_replacement(value, matches)),
-            }
-        }
-        Ast::BinaryOp {
-            span,
-            op,
-            left,
-            right,
-        } => {
-            // TODO: Wrong span
-            Ast::BinaryOp {
-                span,
-                op: *op,
-                left: Box::new(do_replacement(left, matches)),
-                right: Box::new(do_replacement(right, matches)),
-            }
-        }
-    }
-}
-
-fn builtin_binop(op: BinaryOpKind, left: isize, right: isize) -> isize {
-    match op {
-        BinaryOpKind::Add => left + right,
-        BinaryOpKind::Sub => left - right,
-        BinaryOpKind::Mul => left * right,
-        BinaryOpKind::Div => left / right,
-        BinaryOpKind::Mod => left % right,
-        // TODO
-        BinaryOpKind::Pow => left.pow(right as u32),
     }
 }
 
 // https://github.com/frewsxcv/rust-gcd/blob/master/src/lib.rs
-fn gcd_binary(mut u: usize, mut v: usize) -> usize {
+fn gcd_binary(mut u: u64, mut v: u64) -> u64 {
     if u == 0 {
         return v;
     }
@@ -151,15 +89,15 @@ fn gcd_binary(mut u: usize, mut v: usize) -> usize {
     u << shift
 }
 
-fn simplify(mut num: isize, mut denom: isize) -> Option<(isize, isize)> {
+fn simplify(mut num: i64, mut denom: i64) -> Option<(i64, i64)> {
     let orig = (num, denom);
     if denom.is_negative() {
         num = -num;
     }
-    let gcd = gcd_binary(num.abs() as usize, denom as usize);
+    let gcd = gcd_binary(num.abs() as u64, denom as u64);
     if gcd != 1 {
-        num /= gcd as isize;
-        denom /= gcd as isize;
+        num /= gcd as i64;
+        denom /= gcd as i64;
     }
     if (num, denom) != orig {
         Some((num, denom))
@@ -168,47 +106,69 @@ fn simplify(mut num: isize, mut denom: isize) -> Option<(isize, isize)> {
     }
 }
 
-fn builtins<'a>(ast: &Ast<'a>) -> Option<Ast<'a>> {
-    match ast {
-        Ast::BinaryOp {
-            span,
-            op,
-            left,
-            right,
-        } => match (&**left, &**right) {
-            (Ast::Number { value: left, .. }, Ast::Number { value: right, .. }) => {
-                if *op == BinaryOpKind::Div {
-                    if let Some((num, denom)) = simplify(*left, *right) {
-                        Some(Ast::BinaryOp {
-                            span,
-                            op: BinaryOpKind::Div,
-                            left: Box::new(Ast::Number { span, value: num }),
-                            right: Box::new(Ast::Number { span, value: denom }),
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    Some(Ast::Number {
-                        span,
-                        value: builtin_binop(*op, *left, *right),
-                    })
-                }
-            }
-            _ => None,
-        },
-        Ast::UnaryOp {
-            span,
-            op: UnaryOpKind::Negate,
-            value,
-        } => match &**value {
-            Ast::Number { value, .. } => Some(Ast::Number {
+fn build_fraction(span: &str, num: i64, denom: i64) -> Ast {
+    Ast {
+        span,
+        kind: AstKind::Div,
+        args: vec![
+            Ast {
                 span,
-                value: -value,
-            }),
-            _ => None,
-        },
-        _ => None,
+                kind: AstKind::Number(num),
+                args: Vec::new(),
+            },
+            Ast {
+                span,
+                kind: AstKind::Number(denom),
+                args: Vec::new(),
+            },
+        ],
+    }
+}
+
+fn do_builtin_op<'a>(
+    span: &'a str,
+    kind: &AstKind,
+    mut args: impl Iterator<Item = i64>,
+) -> Option<Ast<'a>> {
+    let cfold_result = match kind {
+        AstKind::Add => args.next().unwrap() + args.next().unwrap(),
+        AstKind::Sub => args.next().unwrap() - args.next().unwrap(),
+        AstKind::Mul => args.next().unwrap() * args.next().unwrap(),
+        AstKind::Mod => args.next().unwrap() % args.next().unwrap(),
+        AstKind::Pow => args.next().unwrap().pow(args.next().unwrap() as u32),
+        AstKind::Negate => -args.next().unwrap(),
+        AstKind::Div => {
+            let (num, denom) = simplify(args.next().unwrap(), args.next().unwrap())?;
+            return Some(build_fraction(span, num, denom));
+        }
+        _ => return None,
+    };
+    Some(Ast {
+        span,
+        kind: AstKind::Number(cfold_result),
+        args: Vec::new(),
+    })
+}
+
+fn builtins<'a>(ast: &Ast<'a>) -> Option<Ast<'a>> {
+    fn is_num(arg: &Ast) -> bool {
+        if let AstKind::Number(_) = arg.kind {
+            true
+        } else {
+            false
+        }
+    }
+    fn get_num(arg: &Ast) -> i64 {
+        if let AstKind::Number(x) = arg.kind {
+            x
+        } else {
+            panic!("should have been a number");
+        }
+    }
+    if ast.args.iter().all(is_num) {
+        do_builtin_op(ast.span, &ast.kind, ast.args.iter().map(get_num))
+    } else {
+        None
     }
 }
 
@@ -224,66 +184,40 @@ fn rewrite_one<'a>(ast: &Ast<'a>) -> Option<Ast<'a>> {
 }
 
 pub fn recurse<'a>(ast: &Ast<'a>) -> Option<Ast<'a>> {
-    match ast {
-        Ast::UnaryOp { span, op, value } => Some(Ast::UnaryOp {
-            span,
-            op: *op,
-            value: Box::new(rewrite(&**value)?),
-        }),
-        Ast::BinaryOp {
-            span,
-            op,
-            left,
-            right,
-        } => {
-            let new_left = rewrite(&**left);
-            let new_right = rewrite(&**right);
-            match (new_left, new_right) {
-                (Some(new_left), Some(new_right)) => Some(Ast::BinaryOp {
-                    span,
-                    op: *op,
-                    left: Box::new(new_left),
-                    right: Box::new(new_right),
-                }),
-                (Some(new_left), None) => Some(Ast::BinaryOp {
-                    span,
-                    op: *op,
-                    left: Box::new(new_left),
-                    right: right.clone(),
-                }),
-                (None, Some(new_right)) => Some(Ast::BinaryOp {
-                    span,
-                    op: *op,
-                    left: left.clone(),
-                    right: Box::new(new_right),
-                }),
-                (None, None) => None,
-            }
-        }
-        _ => None,
+    // TODO: There's two collects in here. Would be nice to have only one.
+    let result = ast.args.iter().map(|arg| rewrite(arg)).collect::<Vec<_>>();
+    if result.iter().any(|v| v.is_some()) {
+        Some(Ast {
+            span: ast.span,
+            kind: ast.kind.clone(),
+            args: result
+                .into_iter()
+                .zip(&ast.args)
+                .map(|(new, old)| new.unwrap_or_else(|| old.clone()))
+                .collect(),
+        })
+    } else {
+        None
     }
 }
 
 pub fn rewrite<'a>(ast: &Ast<'a>) -> Option<Ast<'a>> {
     let mut ast = Cow::Borrowed(ast);
-    let mut first = true;
+    // TODO: Figure out if postfix or prefix traversal is faster
     loop {
+        if let Some(new) = recurse(&ast) {
+            ast = Cow::Owned(new);
+        }
         let mut did_any_rewrite = false;
         while let Some(new) = rewrite_one(&ast) {
             println!("rewrite {} to {}", ast, new);
             ast = Cow::Owned(new);
             did_any_rewrite = true;
         }
-        if first || did_any_rewrite {
-            if let Some(new) = recurse(&ast) {
-                ast = Cow::Owned(new);
-            } else {
-                break;
-            }
-        } else {
+        // recurse again if we rewrote the current expr
+        if !did_any_rewrite {
             break;
         }
-        first = false;
     }
     match ast {
         Cow::Owned(ast) => Some(ast),

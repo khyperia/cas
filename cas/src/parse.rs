@@ -1,4 +1,4 @@
-use crate::{Ast, BinaryOpKind, Lexer, Token};
+use crate::{Ast, AstKind, Lexer, Token};
 
 pub fn parse(source: &str) -> Ast {
     match Parser::new(source) {
@@ -56,11 +56,10 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
-            lhs = Ast::BinaryOp {
+            lhs = Ast {
                 span: self.lex.span(mark),
-                op: op.2,
-                left: Box::new(lhs),
-                right: Box::new(rhs),
+                kind: op.2,
+                args: vec![lhs, rhs],
             }
         }
         lhs
@@ -68,11 +67,16 @@ impl<'a> Parser<'a> {
 
     fn primary(&mut self) -> Ast<'a> {
         let result = match &self.current {
-            Token::Ident(span, name) => Ast::Variable {
+            Token::Ident(span, name) => Ast {
                 span,
-                name: name.clone(),
+                kind: AstKind::Variable(name.clone()),
+                args: Vec::new(),
             },
-            &Token::Number(span, value) => Ast::Number { span, value },
+            &Token::Number(span, value) => Ast {
+                span,
+                kind: AstKind::Number(value),
+                args: Vec::new(),
+            },
             Token::OpenParen => {
                 self.next();
                 let result = self.bin_operator();
@@ -89,14 +93,14 @@ impl<'a> Parser<'a> {
 }
 
 // precedence, right-associative, kind
-fn operator_info(token: &Token) -> Option<(u32, bool, BinaryOpKind)> {
+fn operator_info(token: &Token) -> Option<(u32, bool, AstKind)> {
     match token {
-        Token::Add => Some((1, false, BinaryOpKind::Add)),
-        Token::Sub => Some((1, false, BinaryOpKind::Sub)),
-        Token::Mul => Some((2, false, BinaryOpKind::Mul)),
-        Token::Div => Some((2, false, BinaryOpKind::Div)),
-        Token::Mod => Some((2, false, BinaryOpKind::Mod)),
-        Token::Pow => Some((3, true, BinaryOpKind::Pow)),
+        Token::Add => Some((1, false, AstKind::Add)),
+        Token::Sub => Some((1, false, AstKind::Sub)),
+        Token::Mul => Some((2, false, AstKind::Mul)),
+        Token::Div => Some((2, false, AstKind::Div)),
+        Token::Mod => Some((2, false, AstKind::Mod)),
+        Token::Pow => Some((3, true, AstKind::Pow)),
         _ => None,
     }
 }

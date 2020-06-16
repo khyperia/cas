@@ -1,38 +1,20 @@
 use std::fmt::Display;
 
 #[derive(Clone)]
-pub enum Ast<'a> {
-    Number {
-        span: &'a str,
-        value: isize,
-    },
-    Variable {
-        span: &'a str,
-        name: String,
-    },
-    UnaryOp {
-        span: &'a str,
-        op: UnaryOpKind,
-        value: Box<Self>,
-    },
-    BinaryOp {
-        span: &'a str,
-        op: BinaryOpKind,
-        left: Box<Self>,
-        right: Box<Self>,
-    },
+pub struct Ast<'a> {
+    pub span: &'a str,
+    pub kind: AstKind,
+    pub args: Vec<Self>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum UnaryOpKind {
+#[derive(Clone, Eq, PartialEq)]
+pub enum AstKind {
+    Variable(String),
+    Number(i64),
     Negate,
     Sin,
     Cos,
     Tan,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum BinaryOpKind {
     Add,
     Sub,
     Mul,
@@ -43,37 +25,19 @@ pub enum BinaryOpKind {
 
 impl Display for Ast<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Ast::Number { value, .. } => write!(f, "{}", value),
-            Ast::Variable { name, .. } => write!(f, "{}", name),
-            Ast::UnaryOp { op, value, .. } => write!(f, "{}{}", op, value),
-            Ast::BinaryOp {
-                op, left, right, ..
-            } => write!(f, "({} {} {})", left, op, right),
-        }
-    }
-}
-
-impl Display for UnaryOpKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UnaryOpKind::Negate => write!(f, "-"),
-            UnaryOpKind::Sin => write!(f, "sin "),
-            UnaryOpKind::Cos => write!(f, "cos "),
-            UnaryOpKind::Tan => write!(f, "tan "),
-        }
-    }
-}
-
-impl Display for BinaryOpKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BinaryOpKind::Add => write!(f, "+"),
-            BinaryOpKind::Sub => write!(f, "-"),
-            BinaryOpKind::Mul => write!(f, "*"),
-            BinaryOpKind::Div => write!(f, "/"),
-            BinaryOpKind::Mod => write!(f, "%"),
-            BinaryOpKind::Pow => write!(f, "^"),
+        match &self.kind {
+            AstKind::Variable(var) => write!(f, "{}", var),
+            AstKind::Number(num) => write!(f, "{}", num),
+            AstKind::Negate => write!(f, "-{}", self.args[0]),
+            AstKind::Sin => write!(f, "sin {}", self.args[0]),
+            AstKind::Cos => write!(f, "cos {}", self.args[0]),
+            AstKind::Tan => write!(f, "tan {}", self.args[0]),
+            AstKind::Add => write!(f, "({} + {})", self.args[0], self.args[1]),
+            AstKind::Sub => write!(f, "({} - {})", self.args[0], self.args[1]),
+            AstKind::Mul => write!(f, "({} * {})", self.args[0], self.args[1]),
+            AstKind::Div => write!(f, "({} / {})", self.args[0], self.args[1]),
+            AstKind::Mod => write!(f, "({} % {})", self.args[0], self.args[1]),
+            AstKind::Pow => write!(f, "({} ^ {})", self.args[0], self.args[1]),
         }
     }
 }

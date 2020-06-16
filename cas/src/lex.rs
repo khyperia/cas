@@ -10,7 +10,7 @@ pub enum Token<'a> {
     Pow,
     OpenParen,
     CloseParen,
-    Number(&'a str, isize),
+    Number(&'a str, i64),
     Ident(&'a str, String),
 }
 
